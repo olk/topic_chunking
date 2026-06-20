@@ -1,0 +1,22 @@
+[project]
+name = "topic-chunking-pdf"
+version = "0.1.0"
+description = "Parse German PDFs with docling and chunk them with TopicChunking"
+requires-python = ">=3.10,<3.15"
+dependencies = [
+    "docling>=2.104.0",
+    "llama-index-core>=0.13.0,<0.15",
+    "llama-index-embeddings-huggingface>=0.7.0",
+    "sentence-transformers>=2.7.0",
+    "transformers>=4.51.0",
+    "torch",
+    "spacy>=3.8.14",
+    "numpy",
+    "httpx",
+    "click>=8.0",
+]
+
+[tool.uv]
+dev-dependencies = []
+
+
