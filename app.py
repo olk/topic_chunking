@@ -193,15 +193,15 @@ def run(
 
 @click.command()
 @click.argument("pdf_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
-@click.option("--output-json", type=click.Path(path_type=Path), default=None,
+@click.option("-o", "--output-json", type=click.Path(path_type=Path), default=None,
               metavar="PATH", help="Write chunk list as JSON to this path.")
-@click.option("--embed-model", default="Qwen/Qwen3-Embedding-0.6B",
+@click.option("-e", "--embed-model", default="Qwen/Qwen3-Embedding-0.6B",
               help="HuggingFace sentence-transformer model name (default: Qwen/Qwen3-Embedding-0.6B).")
-@click.option("--breakpoint-percentile", type=int, default=95,
+@click.option("-p", "--breakpoint-percentile", type=int, default=95,
               help="Percentile for distance threshold — higher = fewer, larger chunks (default: 95).")
-@click.option("--min-sentences", type=int, default=1,
+@click.option("-s", "--min-sentences", type=int, default=1,
               help="Minimum sentences per chunk (default: 1).")
-@click.option("--buffer-size", type=int, default=1,
+@click.option("-b", "--buffer-size", type=int, default=1,
               help="Number of surrounding sentences in each embedding window (default: 1).")
 @click.option("-m", "--max-tokens", type=int, default=8000,
               help="Max tokens per chunk; <=0 disables the cap (default: 8000).")
