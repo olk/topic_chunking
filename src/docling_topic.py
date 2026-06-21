@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Oliver Kowalke
+# SPDX-License-Identifier: MIT
+
 """Docling-aware topic-based chunker.
 
 Implements :class:`DoclingTopicChunking`, a :class:`BaseChunker` that walks a

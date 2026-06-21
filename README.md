@@ -406,3 +406,10 @@ uv run python app.py doc.pdf -c docling-topic -m 8000 \
 - **Token cap is best-effort**: a sentence longer than `max_tokens` is emitted intact and a `logger.warning` is emitted. The chunk will exceed the cap. Increase `max_tokens` or lower the embedding model's context window if this is a concern.
 - **Cross-item provenance is first-item-only**: a spaCy sentence that spans multiple DocItems is mapped to the first item for provenance purposes. If the sentence crosses a page break, `source_pages` will only contain the first page.
 - **Tables and pictures at section end**: in `DoclingTopicChunking._emit_section`, table and picture sentences are appended after all text-item sentences, not interleaved in their original document order. For most PDFs (where tables and pictures are inlined in running text) this produces incorrect ordering. A future improvement would track per-item positions and interleave sentences accordingly.
+
+
+---
+
+## License
+
+MIT License. Copyright (c) 2026 Oliver Kowalke. See [LICENSE](LICENSE).

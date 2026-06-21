@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Oliver Kowalke
+# SPDX-License-Identifier: MIT
+
 """Tests for DoclingTopicChunking and _topic_split."""
 
 from __future__ import annotations

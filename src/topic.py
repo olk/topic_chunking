@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Oliver Kowalke
+# SPDX-License-Identifier: MIT
+
 """Topic-based chunking strategy.
 
 Implements Greg Kamradt's "level-3 semantic chunking" algorithm

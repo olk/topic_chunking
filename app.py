@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Oliver Kowalke
+# SPDX-License-Identifier: MIT
+
 """CLI app: parse a German PDF with docling and chunk it with TopicChunking."""
 
 import logging

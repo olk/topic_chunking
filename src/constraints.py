@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Oliver Kowalke
+# SPDX-License-Identifier: MIT
+
 """Cross-field token-limit constraints for the RAG pipeline.
 
 The RAG server ingests German PDFs through a chain of components that each

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Oliver Kowalke
+# SPDX-License-Identifier: MIT
+
 """Pure topic-splitting algorithm.
 
 Provides :func:`split_by_topic`, a generic function that takes a flat list of

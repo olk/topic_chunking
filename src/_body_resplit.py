@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Oliver Kowalke
+# SPDX-License-Identifier: MIT
+
 """Body-level text resplitting for DoclingTopicChunking.
 
 Splits a body string into sub-bodies that each fit within a token cap.

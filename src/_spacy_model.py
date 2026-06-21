@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Oliver Kowalke
+# SPDX-License-Identifier: MIT
+
 """Shared spaCy de_dep_news_trf pipeline singleton.
 
 All chunking strategies that need sentence segmentation share the same

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# Copyright (c) 2026 Oliver Kowalke
+# SPDX-License-Identifier: MIT
+
 import logging
 from functools import lru_cache
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
