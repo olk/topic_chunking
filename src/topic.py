@@ -10,13 +10,21 @@ the dependency parser (doc.sents). The shared pipeline is loaded once via
 import logging
 from typing import Any, List
 
-import numpy as np
-
-from .tokenizer import TokenizerProtocol
 from ._spacy_model import get_spacy_nlp
+from ._topic_split import TopicSplitParams, split_by_topic
 from .models import Chunk
+from .tokenizer import TokenizerProtocol
 
 logger = logging.getLogger(__name__)
+
+
+class _TextWithPos:
+    __slots__ = ("text", "start_char", "end_char")
+
+    def __init__(self, text: str, start_char: int, end_char: int):
+        self.text = text
+        self.start_char = start_char
+        self.end_char = end_char
 
 
 class TopicChunking:
@@ -75,36 +83,6 @@ class TopicChunking:
             self._splitter = get_spacy_nlp()
         return self._splitter
 
-    def _build_sentence_groups(
-        self, sentence_texts: List[str]
-    ) -> List[str]:
-        """Build sliding-window combined sentences for embedding.
-
-        For each index i, the combined sentence is
-        ``texts[i-buffer_size] + ... + texts[i] + ... + texts[i+buffer_size]``,
-        clipped at document boundaries.  Mirrors LlamaIndex's
-        ``SemanticSplitterNodeParser._build_sentence_groups``.
-
-        Args:
-            sentence_texts: Flat list of individual sentence strings.
-
-        Returns:
-            List of combined sentence strings, one per input sentence.
-        """
-        n = len(sentence_texts)
-        groups: List[str] = []
-        for i in range(n):
-            combined: str = ""
-            for j in range(i - self._buffer_size, i):
-                if j >= 0:
-                    combined += sentence_texts[j]
-            combined += sentence_texts[i]
-            for j in range(i + 1, i + 1 + self._buffer_size):
-                if j < n:
-                    combined += sentence_texts[j]
-            groups.append(combined)
-        return groups
-
     def _split_into_sentences(self, text: str) -> List[tuple]:
         """Split text into sentences with positions.
 
@@ -119,20 +97,6 @@ class TopicChunking:
             if txt:
                 result.append((txt, sent.start_char, sent.end_char))
         return result
-
-    def _calculate_distances(
-        self, embeddings: List[List[float]], embed_model: Any
-    ) -> List[float]:
-        """Cosine distance between consecutive embeddings.
-
-        Delegates to ``embed_model.similarity`` (default ``SimilarityMode.DEFAULT = cosine``)
-        and converts similarity to distance via ``1 - sim``.
-        """
-        distances: List[float] = []
-        for i in range(len(embeddings) - 1):
-            similarity = embed_model.similarity(embeddings[i], embeddings[i + 1])
-            distances.append(1.0 - float(similarity))
-        return distances
 
     def chunk(self, text: str, **kwargs) -> List[Chunk]:
         """Chunk text using topic-based boundary detection.
@@ -162,60 +126,40 @@ class TopicChunking:
                 end_char=sentences_with_pos[0][2],
             )]
 
-        sentence_texts = [s[0] for s in sentences_with_pos]
-        windowed_texts = self._build_sentence_groups(sentence_texts)
+        sentences = [
+            _TextWithPos(s[0], s[1], s[2])
+            for s in sentences_with_pos
+        ]
 
-        try:
-            embeddings = self._embed_model.get_text_embedding_batch(windowed_texts)
-            distances = self._calculate_distances(embeddings, self._embed_model)
-        except Exception as e:
-            raise ValueError(f"TopicChunking embedding/similarity failed: {e}") from e
+        ranges = split_by_topic(
+            sentences,
+            TopicSplitParams(
+                embed_model=self._embed_model,
+                breakpoint_threshold_percentile=self.breakpoint_threshold_percentile,
+                min_sentences_per_chunk=self.min_sentences_per_chunk,
+                buffer_size=self._buffer_size,
+            ),
+        )
 
-        if len(embeddings) != len(sentence_texts):
-            raise ValueError(
-                f"Embedding count mismatch: got {len(embeddings)}, expected {len(sentence_texts)}"
-            )
-
-        if not distances:
-            return [Chunk(
-                text=text,
-                index=0,
-                start_char=0,
-                end_char=len(text),
-            )]
-
-        threshold = self._compute_distance_threshold(distances)
-
-        breakpoints = [0]
-        for i, dist in enumerate(distances):
-            if dist > threshold:
-                breakpoints.append(i + 1)
-
-        chunks = []
-        for idx, start_idx in enumerate(breakpoints):
-            end_idx = breakpoints[idx + 1] if idx + 1 < len(breakpoints) else len(sentences_with_pos)
-
-            if end_idx - start_idx < self.min_sentences_per_chunk and len(breakpoints) > 1:
-                continue
-
-            chunk_text = " ".join(sentences_with_pos[i][0] for i in range(start_idx, end_idx))
-            start_pos = sentences_with_pos[start_idx][1]
-            end_pos = sentences_with_pos[end_idx - 1][2]
-
+        chunks: List[Chunk] = []
+        for chunk_idx, (start_i, end_i) in enumerate(ranges):
+            chunk_text = " ".join(sentences[i].text for i in range(start_i, end_i + 1))
+            start_pos = sentences[start_i].start_char
+            end_pos = sentences[end_i].end_char
             chunks.append(Chunk(
                 text=chunk_text,
                 index=len(chunks),
                 start_char=start_pos,
                 end_char=end_pos,
-                metadata={"topic_boundary": idx < len(breakpoints) - 1},
+                metadata={"topic_boundary": chunk_idx < len(ranges) - 1},
             ))
 
         if not chunks:
-            return [Chunk(
-                text=sentence_texts[0],
+            chunks = [Chunk(
+                text=sentences[0].text,
                 index=0,
-                start_char=sentences_with_pos[0][1],
-                end_char=sentences_with_pos[0][2],
+                start_char=sentences[0].start_char,
+                end_char=sentences[0].end_char,
             )]
 
         logger.debug(f"Created {len(chunks)} topic-based chunks")
@@ -227,18 +171,8 @@ class TopicChunking:
                 chunks,
                 cap_tokens=self.max_tokens,
                 tokenizer=self._tokenizer,
-                sentence_splitter=lambda text: [s.text for s in nlp(text).sents],
+                sentence_splitter=lambda t: [s.text for s in nlp(t).sents],
             )
             logger.debug(f"Resplit to {len(chunks)} chunks after token cap enforcement")
 
         return chunks
-
-    def _compute_distance_threshold(self, distances: List[float]) -> float:
-        """Distance threshold = np.percentile(distances, breakpoint_threshold_percentile).
-
-        Any pair whose distance exceeds this threshold becomes a topic boundary.
-        With the default 95, the top ~5% of consecutive-pair distances split.
-        """
-        if not distances:
-            return 0.0
-        return float(np.percentile(distances, self.breakpoint_threshold_percentile))

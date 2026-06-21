@@ -20,10 +20,13 @@ instead of letting the embedder or LLM truncate it.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, List, Sequence
+from typing import TYPE_CHECKING, Any, Callable, List, Sequence
 
 from .models import Chunk
 from .tokenizer import count_tokens
+
+if TYPE_CHECKING:
+    from docling_core.transforms.chunker import BaseChunk
 
 logger = logging.getLogger(__name__)
 
@@ -204,5 +207,130 @@ def resplit_oversized_chunks(
                 )
             )
             next_index += 1
+
+    return out
+
+
+def resplit_oversized_doc_chunks(
+    chunks: Sequence["BaseChunk"],
+    cap_tokens: int,
+    tokenizer: Any,
+    sentence_splitter: Callable[[str], list[str]] | None = None,
+) -> list["BaseChunk"]:
+    """Re-split any DocChunk whose token count exceeds ``cap_tokens``.
+
+    Preserves the docling ``meta`` (doc_items, headings, origin, source_charspan,
+    source_pages, source_bboxes) by partitioning at doc_item boundaries.
+    """
+    if cap_tokens <= 0:
+        raise ValueError("cap_tokens must be positive")
+    if not chunks:
+        return []
+
+    def _split_into_sentences(unit: str) -> list[str]:
+        if not sentence_splitter:
+            return [unit]
+        return [s for s in sentence_splitter(unit) if s.strip()] or [unit]
+
+    def _doc_item_charspan(item: Any) -> tuple[int, int] | None:
+        prov = getattr(item, "prov", None)
+        if prov and len(prov) > 0:
+            return prov[0].charspan
+        return None
+
+    out: list["BaseChunk"] = []
+    next_index = 0
+
+    for chunk in chunks:
+        from docling_core.transforms.chunker.doc_chunk import DocChunk
+
+        text = chunk.text or ""
+        if not text.strip():
+            continue
+
+        token_count = count_tokens(text, tokenizer)
+        if token_count <= cap_tokens:
+            out.append(chunk)
+            next_index += 1
+            continue
+
+        doc_items = getattr(chunk.meta, "doc_items", []) if hasattr(chunk, "meta") else []
+
+        units: list[str] = []
+        if "\n" in text:
+            for line in text.splitlines(keepends=True):
+                if line:
+                    units.append(line)
+        else:
+            i = 0
+            n = len(text)
+            while i < n:
+                j = i
+                while j < n and text[j].isspace():
+                    j += 1
+                if j > i:
+                    units.append(text[i:j])
+                    i = j
+                k = i
+                while k < n and not text[k].isspace():
+                    k += 1
+                if k > i:
+                    units.append(text[i:k])
+                    i = k
+
+        def emit(sub_text: str) -> None:
+            out.append(
+                DocChunk(
+                    text=sub_text,
+                    meta=chunk.meta,  # type: ignore[arg-type]
+                )
+            )
+            nonlocal next_index
+            next_index += 1
+
+        buffer: list[str] = []
+        buffer_tokens = 0
+        for unit in units:
+            unit_tokens = count_tokens(unit, tokenizer)
+            if unit_tokens > cap_tokens:
+                if buffer:
+                    emit("".join(buffer))
+                    buffer = []
+                    buffer_tokens = 0
+                sub_units = _split_into_sentences(unit)
+                if len(sub_units) > 1:
+                    for s in sub_units:
+                        s_tokens = count_tokens(s, tokenizer)
+                        if buffer and buffer_tokens + s_tokens > cap_tokens:
+                            emit("".join(buffer))
+                            buffer = []
+                            buffer_tokens = 0
+                        buffer.append(s)
+                        buffer_tokens += s_tokens
+                    continue
+                encoded = tokenizer.encode(unit)
+                if hasattr(encoded, "__len__"):
+                    n_tokens = len(encoded)
+                else:
+                    n_tokens = sum(1 for _ in encoded)
+                for tok_idx in range(0, n_tokens, cap_tokens):
+                    sub_encoded = encoded[tok_idx:tok_idx + cap_tokens]
+                    if hasattr(tokenizer, "decode"):
+                        sub_text = tokenizer.decode(list(sub_encoded))
+                    else:
+                        sub_text = unit
+                    if sub_text:
+                        emit(sub_text)
+                continue
+
+            if buffer and buffer_tokens + unit_tokens > cap_tokens:
+                emit("".join(buffer))
+                buffer = []
+                buffer_tokens = 0
+            buffer.append(unit)
+            buffer_tokens += unit_tokens
+
+        if buffer:
+            emit("".join(buffer))
 
     return out

@@ -34,8 +34,8 @@ def setup_logging(verbose: bool) -> None:
     )
 
 
-def parse_pdf(pdf_path: Path) -> str:
-    """Convert PDF to markdown using docling on CPU."""
+def parse_pdf_docling(pdf_path: Path):
+    """Convert PDF to DoclingDocument using docling on CPU."""
     from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import PdfPipelineOptions
@@ -53,7 +53,7 @@ def parse_pdf(pdf_path: Path) -> str:
         }
     )
     result = converter.convert(str(pdf_path))
-    return result.document.export_to_markdown()
+    return result.document
 
 
 def chunk_text(
@@ -63,7 +63,7 @@ def chunk_text(
     min_sentences: int,
     buffer_size: int,
     max_tokens: int,
-    ):
+):
     """Chunk text using TopicChunking with HuggingFaceEmbedding."""
     from llama_index.embeddings.huggingface import HuggingFaceEmbedding
     from src.topic import TopicChunking
@@ -90,6 +90,44 @@ def chunk_text(
     return chunker.chunk(text), tokenizer
 
 
+def chunk_docling_topic(
+    dl_doc,
+    embed_model_name: str,
+    breakpoint_percentile: int,
+    min_sentences: int,
+    buffer_size: int,
+    max_tokens: int,
+):
+    """Chunk a DoclingDocument using DoclingTopicChunking."""
+    from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+    from src.docling_topic import DoclingTopicChunking
+    from src.tokenizer import get_tokenizer
+    from src.models import Chunk
+
+    embed_model = HuggingFaceEmbedding(
+        model_name=embed_model_name,
+        device="cpu",
+        cache_folder=str(HF_HUB_CACHE),
+        model_kwargs={"local_files_only": True},
+    )
+    tokenizer = get_tokenizer(provider="vllm", model=embed_model_name)
+
+    chunker = DoclingTopicChunking(
+        embed_model=embed_model,
+        breakpoint_threshold_percentile=breakpoint_percentile,
+        min_sentences_per_chunk=min_sentences,
+        buffer_size=buffer_size,
+        max_tokens=max_tokens,
+        tokenizer=tokenizer,
+    )
+
+    chunks: list[Chunk] = []
+    for i, doc_chunk in enumerate(chunker.chunk(dl_doc)):
+        chunks.append(chunker.to_project_chunk(doc_chunk, i))
+
+    return chunks, tokenizer
+
+
 def run(
     pdf_path: Path,
     output_json: Path | None,
@@ -99,6 +137,7 @@ def run(
     buffer_size: int,
     max_tokens: int,
     width: int,
+    chunker: str,
 ) -> None:
     logger = logging.getLogger("app")
 
@@ -108,27 +147,40 @@ def run(
         os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
 
     logger.info("Parsing PDF: %s", pdf_path)
-    text = parse_pdf(pdf_path)
-    logger.info("Extracted %d chars from PDF", len(text))
+    dl_doc = parse_pdf_docling(pdf_path)
+    logger.info("Extracted document (origin=%s)", dl_doc.origin)
 
-    if not text.strip():
-        logger.error("No text extracted from PDF")
-        sys.exit(1)
+    if chunker == "docling-topic":
+        logger.info("Starting docling-topic chunking ...")
+        chunks, tokenizer = chunk_docling_topic(
+            dl_doc,
+            embed_model_name=embed_model_name,
+            breakpoint_percentile=breakpoint_percentile,
+            min_sentences=min_sentences,
+            buffer_size=buffer_size,
+            max_tokens=max_tokens,
+        )
+    else:
+        text = dl_doc.export_to_markdown()
+        logger.info("Extracted %d chars from PDF", len(text))
+        if not text.strip():
+            logger.error("No text extracted from PDF")
+            sys.exit(1)
+        logger.info("Starting topic-based chunking ...")
+        chunks, tokenizer = chunk_text(
+            text,
+            embed_model_name=embed_model_name,
+            breakpoint_percentile=breakpoint_percentile,
+            min_sentences=min_sentences,
+            buffer_size=buffer_size,
+            max_tokens=max_tokens,
+        )
 
-    logger.info("Starting topic-based chunking ...")
-    chunks, tokenizer = chunk_text(
-        text,
-        embed_model_name=embed_model_name,
-        breakpoint_percentile=breakpoint_percentile,
-        min_sentences=min_sentences,
-        buffer_size=buffer_size,
-        max_tokens=max_tokens,
-    )
     logger.info("Chunking complete")
 
     from src.text_format import format_chunks
     from src.tokenizer import count_tokens
-    total_tokens = count_tokens(text, tokenizer)
+    total_tokens = count_tokens(" ".join(c.text for c in chunks), tokenizer)
     click.echo(f"Total: {total_tokens} tokens\n")
     click.echo(format_chunks(chunks, tokenizer, width))
 
@@ -155,6 +207,8 @@ def run(
               help="Max tokens per chunk; <=0 disables the cap (default: 8000).")
 @click.option("-w", "--width", type=int, default=100,
               help="Max chars per line when printing chunks; <=0 disables wrapping (default: 100).")
+@click.option("-c", "--chunker", type=click.Choice(["topic", "docling-topic"]), default="topic",
+              help="Chunking strategy: 'topic' = text-based (Greg Kamradt), 'docling-topic' = docling-aware with source positions (default: topic).")
 @click.option("-v", "--verbose", is_flag=True, help="Enable DEBUG logging.")
 def main(
     pdf_path: Path,
@@ -165,6 +219,7 @@ def main(
     buffer_size: int,
     max_tokens: int,
     width: int,
+    chunker: str,
     verbose: bool,
 ) -> None:
     """Parse a German PDF with docling and chunk it with TopicChunking."""
@@ -179,6 +234,7 @@ def main(
         buffer_size=buffer_size,
         max_tokens=max_tokens,
         width=width,
+        chunker=chunker,
     )
 
 
